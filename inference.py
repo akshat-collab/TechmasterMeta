@@ -14,9 +14,14 @@ from support_inbox_env.tasks import TASKS
 
 SYSTEM_PROMPT = """You are a support-operations agent acting in a deterministic RL environment.
 Return exactly one JSON object with keys: action_type, value, message.
-Choose one of these action types only: classify_intent, set_priority, assign_team, draft_reply, resolve, escalate.
+Choose one of these action types only: classify_intent, set_priority, assign_team, add_internal_note, request_more_info, change_status, draft_reply, apply_refund, resolve, escalate.
 Do not include markdown fences or any extra text.
 """
+
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "openai/gpt-oss-120b:fastest")
+HF_TOKEN = os.getenv("HF_TOKEN")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 
 
 def log_start(task_id: str, difficulty: str) -> None:
@@ -173,20 +178,19 @@ def call_model(client: OpenAI, model_name: str, observation: Dict[str, Any]) -> 
     return SupportAction.model_validate(parsed)
 
 
-def require_env(name: str) -> str:
-    value = os.getenv(name)
-    if not value:
-        raise RuntimeError(f"Missing required environment variable: {name}")
-    return value
-
-
 def run() -> int:
-    api_base_url = require_env("API_BASE_URL")
-    model_name = require_env("MODEL_NAME")
-    hf_token = require_env("HF_TOKEN")
     request_timeout = float(os.getenv("MODEL_TIMEOUT_SECONDS", "8"))
+    client: OpenAI | None = None
 
-    client = OpenAI(base_url=api_base_url, api_key=hf_token, timeout=request_timeout)
+    if HF_TOKEN:
+        try:
+            client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN, timeout=request_timeout)
+        except Exception as exc:
+            print(f"[DEBUG] OpenAI client initialization failed: {exc}", flush=True)
+            client = None
+    else:
+        print("[DEBUG] HF_TOKEN not set, using deterministic fallback policy.", flush=True)
+
     env = SupportInboxEnvironment()
 
     task_scores: List[float] = []
@@ -201,11 +205,20 @@ def run() -> int:
 
         while not done and steps < task.max_turns:
             try:
-                action = call_model(client, model_name, observation)
+                if client is None:
+                    raise RuntimeError("No model client available.")
+                action = call_model(client, MODEL_NAME, observation)
             except Exception:
                 action = fallback_policy(observation)
 
-            result = env.step(action)
+            try:
+                result = env.step(action)
+            except Exception as exc:
+                print(f"[DEBUG] env.step failed on task {task.task_id}: {exc}", flush=True)
+                fallback_action = fallback_policy(observation)
+                result = env.step(fallback_action)
+                action = fallback_action
+
             steps += 1
             final_score = float(result.info["grader_score"])
             log_step(task.task_id, steps, action, result.reward.value, result.done, final_score)
