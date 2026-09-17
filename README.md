@@ -207,3 +207,6 @@ Because baseline scores depend on the selected external model endpoint, exact sc
 - `inference.py` at repo root
 - Dockerfile builds the environment
 - README documents setup, tasks, and action/observation spaces
+
+## Documentation Status
+Last documentation review: 17 September 2026
