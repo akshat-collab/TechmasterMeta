@@ -209,4 +209,4 @@ Because baseline scores depend on the selected external model endpoint, exact sc
 - README documents setup, tasks, and action/observation spaces
 
 ## Documentation Status
-Last documentation review: 19 September 2026
+Last documentation review: 20 September 2026
